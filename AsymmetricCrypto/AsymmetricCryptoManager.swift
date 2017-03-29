@@ -173,7 +173,7 @@ class AsymmetricCryptoManager: NSObject {
         }
     }
     
-    func decryptMessageWithPrivateKey(_ encryptedData: Data, completion: @escaping (_ success: Bool, _ result: String?, _ error: AsymmetricCryptoException?) -> Void) {
+    func decryptMessageWithPrivateKey(_ encryptedData: Data, _ padding: SecPadding, completion: @escaping (_ success: Bool, _ result: String?, _ error: AsymmetricCryptoException?) -> Void) {
         DispatchQueue.global(qos: DispatchQoS.QoSClass.default).async { () -> Void in
             
             if let privateKeyRef = self.getPrivateKeyReference() {
@@ -187,8 +187,7 @@ class AsymmetricCryptoManager: NSObject {
                     return bytes
                 })
                 var plainTextLen = plainData.count
-                
-                let status = SecKeyDecrypt(privateKeyRef, .PKCS1, encryptedText, encryptedTextLen, plainText, &plainTextLen)
+                let status = SecKeyDecrypt(privateKeyRef, padding, encryptedText, encryptedTextLen, plainText, &plainTextLen)
 
                 // analyze results and call the completion in main thread
                 DispatchQueue.main.async(execute: { () -> Void in
