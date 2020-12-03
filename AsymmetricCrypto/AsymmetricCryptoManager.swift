@@ -156,9 +156,15 @@ class AsymmetricCryptoManager: NSObject {
                 
                 // prepare output data buffer
                 var cipherData = Data(count: SecKeyGetBlockSize(publicKeyRef))
-                let cipherText = cipherData.withUnsafeMutableBytes({ (bytes: UnsafeMutablePointer<UInt8>) -> UnsafeMutablePointer<UInt8> in
-                    return bytes
+                let optionalCipherText = cipherData.withUnsafeMutableBytes({ (ptr: UnsafeMutableRawBufferPointer) -> UnsafeMutablePointer<UInt8>? in
+                    return ptr.bindMemory(to: UInt8.self).baseAddress
                 })
+                
+                guard let cipherText = optionalCipherText else {
+                    completion(false, nil, .unknownError)
+                    return
+                }
+
                 var cipherTextLen = cipherData.count
                 
                 let status = SecKeyEncrypt(publicKeyRef, .PKCS1, plainText, plainTextLen, cipherText, &cipherTextLen)
@@ -166,7 +172,7 @@ class AsymmetricCryptoManager: NSObject {
                 // analyze results and call the completion in main thread
                 DispatchQueue.main.async(execute: { () -> Void in
                     completion(status == errSecSuccess, cipherData, status == errSecSuccess ? nil : .unableToEncrypt)
-                    cipherText.deinitialize()
+                    cipherText.deinitialize(count: cipherTextLen)
                 })
                 return
             } else { DispatchQueue.main.async(execute: { completion(false, nil, .keyNotFound) }) }
@@ -183,10 +189,17 @@ class AsymmetricCryptoManager: NSObject {
                 
                 // prepare output data buffer
                 var plainData = Data(count: kAsymmetricCryptoManagerCypheredBufferSize)
-                let plainText = plainData.withUnsafeMutableBytes({ (bytes: UnsafeMutablePointer<UInt8>) -> UnsafeMutablePointer<UInt8> in
-                    return bytes
+                let optionalPlainText = plainData.withUnsafeMutableBytes({ (ptr: UnsafeMutableRawBufferPointer) -> UnsafeMutablePointer<UInt8>? in
+                    return ptr.bindMemory(to: UInt8.self).baseAddress
                 })
+                
+                guard let plainText = optionalPlainText else {
+                    completion(false, nil, .unknownError)
+                    return
+                }
+
                 var plainTextLen = plainData.count
+                
                 let status = SecKeyDecrypt(privateKeyRef, padding, encryptedText, encryptedTextLen, plainText, &plainTextLen)
 
                 // analyze results and call the completion in main thread
@@ -195,11 +208,11 @@ class AsymmetricCryptoManager: NSObject {
                         // adjust NSData length
                         plainData.count = plainTextLen
                         // Generate and return result string
-                        if let string = NSString(data: plainData as Data, encoding: String.Encoding.utf8.rawValue) as? String {
+                        if let string = NSString(data: plainData as Data, encoding: String.Encoding.utf8.rawValue) as String? {
                             completion(true, string, nil)
                         } else { completion(false, nil, .unableToDecrypt) }
                     } else { completion(false, nil, .unableToDecrypt) }
-                    plainText.deinitialize()
+                    plainText.deinitialize(count: plainTextLen)
                 })
                 return
             } else { DispatchQueue.main.async(execute: { completion(false, nil, .keyNotFound) }) }
@@ -215,24 +228,36 @@ class AsymmetricCryptoManager: NSObject {
             if let privateKeyRef = self.getPrivateKeyReference() {
                 // result data
                 var resultData = Data(count: SecKeyGetBlockSize(privateKeyRef))
-                let resultPointer = resultData.withUnsafeMutableBytes({ (bytes: UnsafeMutablePointer<UInt8>) -> UnsafeMutablePointer<UInt8> in
-                    return bytes
+                let optionalResultPointer = resultData.withUnsafeMutableBytes({ (ptr: UnsafeMutableRawBufferPointer) -> UnsafeMutablePointer<UInt8>? in
+                    return ptr.bindMemory(to: UInt8.self).baseAddress
                 })
+                
+                guard let resultPointer = optionalResultPointer else {
+                    completion(false, nil, .unknownError)
+                    return
+                }
+
                 var resultLength = resultData.count
                 
                 if let plainData = message.data(using: String.Encoding.utf8) {
                     // generate hash of the plain data to sign
                     var hashData = Data(count: Int(CC_SHA1_DIGEST_LENGTH))
-                    let hash = hashData.withUnsafeMutableBytes({ (bytes: UnsafeMutablePointer<UInt8>) -> UnsafeMutablePointer<UInt8> in
-                        return bytes
+                    let optionalHash = hashData.withUnsafeMutableBytes({ (ptr: UnsafeMutableRawBufferPointer) -> UnsafeMutablePointer<UInt8>? in
+                        return ptr.bindMemory(to: UInt8.self).baseAddress
                     })
+                    
+                    guard let hash = optionalHash else {
+                        completion(false, nil, .unknownError)
+                        return
+                    }
+
                     CC_SHA1((plainData as NSData).bytes.bindMemory(to: Void.self, capacity: plainData.count), CC_LONG(plainData.count), hash)
                     
                     // sign the hash
                     let status = SecKeyRawSign(privateKeyRef, SecPadding.PKCS1SHA1, hash, hashData.count, resultPointer, &resultLength)
                     if status != errSecSuccess { error = .unableToEncrypt }
                     else { resultData.count = resultLength }
-                    hash.deinitialize()
+                    hash.deinitialize(count: hashData.count)
                 } else { error = .wrongInputDataFormat }
                 
                 // analyze results and call the completion in main thread
@@ -255,9 +280,15 @@ class AsymmetricCryptoManager: NSObject {
             if let publicKeyRef = self.getPublicKeyReference() {
                 // hash data
                 var hashData = Data(count: Int(CC_SHA1_DIGEST_LENGTH))
-                let hash = hashData.withUnsafeMutableBytes({ (bytes: UnsafeMutablePointer<UInt8>) -> UnsafeMutablePointer<UInt8> in
-                    return bytes
+                let optionalHash = hashData.withUnsafeMutableBytes({ (ptr: UnsafeMutableRawBufferPointer) -> UnsafeMutablePointer<UInt8>? in
+                    return ptr.bindMemory(to: UInt8.self).baseAddress
                 })
+                
+                guard let hash = optionalHash else {
+                    completion(false, .unknownError)
+                    return
+                }
+                
                 CC_SHA1((data as NSData).bytes.bindMemory(to: Void.self, capacity: data.count), CC_LONG(data.count), hash)
                 // input and output data
                 let signaturePointer = (signatureData as NSData).bytes.bindMemory(to: UInt8.self, capacity: signatureData.count)
@@ -268,7 +299,7 @@ class AsymmetricCryptoManager: NSObject {
                 if status != errSecSuccess { error = .unableToDecrypt }
                 
                 // analyze results and call the completion in main thread
-                hash.deinitialize()
+                hash.deinitialize(count: hashData.count)
                 DispatchQueue.main.async(execute: { () -> Void in
                     completion(status == errSecSuccess, error)
                 })
